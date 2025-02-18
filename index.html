@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Anomaly Detection Server</title>
+    <script src="https://cdn.webrtc.ecl.ntt.com/skyway-4.4.5.js"></script>
+    <!-- <script src="jsmpeg.min.js"></script> -->
+</head>
+<body>
+    <button type="button" onclick="connect()">Connect</button>
+    <button type="button" onclick="disconnect()">Disconnect</button>
+    <div id="message-div"></div><br>
+    <div id="video-div"></div><br>
+    <!-- <canvas id="canvas" width="640" height="480"></canvas> -->
+    <p id="score"></p>
+</body>
+<script>
+    const robotPeerIds = Array(6);
+    const skywayKey = '';  // Skywayキーをこちらに設定してください
+    const messageDiv = document.getElementById('message-div');
+    const videoDiv = document.getElementById('video-div');
+
+    var imgCount = 0;
+    
+    let operatorPeerId;
+
+    const peer = new Peer('detection-peer', {
+            key: skywayKey,
+            debug: 3
+        });
+    
+    peer.on("open", () => {
+        console.log("PEER OPEN");
+    });
+        
+    function connect() {
+        if (!peer.open) {
+            console.warn('peer is closed')
+            return;
+        }
+        const room = peer.joinRoom("nifrel", {
+            mode: "sfu"
+        });
+        
+        room.once('open', () => {
+            const messageElm = document.createElement("p");
+            messageElm.textContent = "== join room ==";
+            messageDiv.append(messageElm);
+        });
+
+        room.on('stream', async stream => {
+            console.log("get stream from " + stream.peerId);
+
+            const videoElm = document.createElement("video");
+            videoElm.srcObject = stream;
+            const idElm = document.createElement("p")
+
+            var streamWidth; 
+            videoElm.onloadedmetadata = function() {
+                streamWidth = parseInt(videoElm.videoWidth);
+                
+                if (streamWidth < 200) {  // streamWidth !== 640
+                    operatorPeerId = stream.peerId;
+                    console.log("get operator peer id: ", operatorPeerId);
+                }
+                else {
+                    if (!robotPeerIds.includes(stream.peerId)) {
+                        console.log("add robot. peerId: ", stream.peerId);
+                        // robotPeerIds.push(stream.peerId);
+                        if (!robotPeerIds[0]) {
+                            robotPeerIds[0] = stream.peerId;
+                            // console.log("set!!!")
+                            var targetIdElm = document.getElementById(stream.peerId);
+                            targetIdElm.textContent = '[0] ' + stream.peerId;
+                        }
+                        else if (!robotPeerIds[1]) {
+                            robotPeerIds[1] = stream.peerId;
+                            var targetIdElm = document.getElementById(stream.peerId);
+                            targetIdElm.textContent = '[1] ' + stream.peerId;
+                        }
+                        else if (!robotPeerIds[2]) {
+                            robotPeerIds[2] = stream.peerId;
+                            // console.log("set!!!")
+                            var targetIdElm = document.getElementById(stream.peerId);
+                            targetIdElm.textContent = '[2] ' + stream.peerId;
+                        }
+                        else if (!robotPeerIds[3]) {
+                            robotPeerIds[3] = stream.peerId;
+                            var targetIdElm = document.getElementById(stream.peerId);
+                            targetIdElm.textContent = '[3] ' + stream.peerId;
+                        }
+                        else if (!robotPeerIds[4]) {
+                            robotPeerIds[4] = stream.peerId;
+                            var targetIdElm = document.getElementById(stream.peerId);
+                            targetIdElm.textContent = '[4] ' + stream.peerId;
+                        }
+                        else {
+                            robotPeerIds[5] = stream.peerId;
+                            var targetIdElm = document.getElementById(stream.peerId);
+                            targetIdElm.textContent = '[5] ' + stream.peerId;
+                        }
+                    }
+                }
+            };
+
+            videoElm.playsInline = true;
+            videoElm.setAttribute('id', stream.peerId + "-video");
+            idElm.context = "";
+            idElm.setAttribute('id', stream.peerId);
+            videoDiv.append(idElm);
+            videoDiv.append(videoElm);
+            await videoElm.play().catch(console.error);
+
+            const ws = new WebSocket("ws://35.75.176.11:8181");
+
+            const mediaRecorder = new MediaRecorder(stream);
+            const robotId = robotPeerIds.indexOf(stream.peerId);
+            const sendPeers = [];
+            var count = 0;
+            
+            ws.onopen = () => {
+                ws.send(JSON.stringify({robotId: robotId.toString()}));
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data && event.data.size > 0 && robotPeerIds.includes(stream.peerId)) {
+                        ws.send(event.data);
+                    }
+                };
+                mediaRecorder.start(1000);
+            };
+
+            // 結果をオペレータに送信
+            ws.onmessage = function(event) {
+                var getData = JSON.parse(event.data);
+                var robotId = parseInt(getData["robotId"]);
+                var peerId = robotPeerIds[robotId];
+                var result = parseInt(getData["result"]);
+                var reason = getData["reason"];
+                var score = parseInt(getData["score"]);
+                if (result == 0) {
+                    console.log(`[${robotId}] result: ${result}, score: ${score}`);
+                }
+                else if (result == 1) {
+                    console.log(`[${robotId}] result: ${result}, score: ${score}, reason: ${reason}`);
+                }
+                sendDetectionResult(room, result, peerId, reason);
+            };
+            
+        });
+
+        room.on("peerLeave", (peerId) => {
+            if (robotPeerIds.includes(peerId)) {
+                // const newIds = robotPeerIds.filter(id => id !== peerId);
+                // robotPeerIds = newIds;
+                // console.log("robot peer ids: ", robotPeerIds);
+                robotPeerIds[robotPeerIds.indexOf(peerId)] = null;
+                const videoElm = document.getElementById(peerId + "-video");
+                const idElm = document.getElementById(peerId);
+                videoElm.remove();
+                idElm.remove();
+            }
+            else if (document.getElementById(peerId + "-video")) {
+                const videoElm = document.getElementById(peerId + "-video");
+                const idElm = document.getElementById(peerId);
+                videoElm.remove();
+                idElm.remove();
+            }
+        });
+    }
+
+    function disconnect() {
+        console.log("Disconnect");
+        peer.destroy();
+    }
+
+    function sendDetectionResult(room, result, peerId, reason) {
+        if (peerId == operatorPeerId) {
+            return;
+        }
+
+        message = {
+            type: 'detectionResult',
+            peerId: peerId,
+            result: result,
+            reason: reason,
+            modality: 'multimodal',
+        }
+        room.send(message);
+    }
+</script>
+</html>
